@@ -6,9 +6,11 @@
     py -m offline.patch restore    (devuelve los archivos originales)
 
 Cada host externo que el juego contacta por su cuenta (backend, contenido,
-telemetría, pagos, cuentas, multijugador, Unity Cloud y Firebase) pasa a una IP
-de loopback propia, 127.0.1.N. El servidor local sabe qué host original se
-pedía mirando la IP a la que llega la conexión (launcher-data/offline-hosts.json).
+telemetría, pagos, cuentas, multijugador, Unity Cloud y Firebase) pasa a
+127.0.0.1 con un puerto propio (8001, 8002...). El servidor local sabe qué host
+original se pedía por el puerto (launcher-data/offline-hosts.json). Los esquemas
+https:// y wss:// de la metadata pasan a http:// y ws://: UnityTls no confía en
+un certificado local y Unity solo permite HTTP sin TLS contra 127.0.0.1.
 
 Archivos que se cambian, cada uno con el método que admite su formato:
   * global-metadata.dat   literales de C#: se acortan y se ajusta su longitud.
@@ -47,6 +49,7 @@ METADATA = f"{GAME_DATA}/il2cpp_data/Metadata/global-metadata.dat"
 STEAM_API = f"{PLUGINS}/steam_api64.dll"
 STUB = BASE / "steam_stub" / "steam_api64.dll"
 STUB_INI = BASE / "steam_stub" / "steam_stub.ini"
+FIRST_PORT = 8001  # el host n del mapa escucha en 127.0.0.1:FIRST_PORT+n
 
 # (ruta relativa al juego, método). Los métodos están en PATCHERS.
 FILES = [
@@ -145,11 +148,24 @@ def _sub_hosts(data: bytes, hosts: dict[str, str]) -> bytes:
     return HOST_RE.sub(sub, data)
 
 
+# El servidor local no puede presentar un certificado en el que confíe UnityTls
+# (haría falta instalar una CA en Windows), así que el juego le habla en claro.
+# Todo lo que usaba TLS apunta ya a loopback, de modo que nada sale sin cifrar.
+SCHEME_LITERALS = {b"https": b"http", b"https://": b"http://", b"wss": b"ws", b"wss://": b"ws://",
+                   b"wss://{0}:{1}": b"ws://{0}:{1}"}
+
+
+def _plain_schemes(lit: bytes) -> bytes:
+    if lit in SCHEME_LITERALS:
+        return SCHEME_LITERALS[lit]
+    return lit.replace(b"https://127.0.0.1", b"http://127.0.0.1").replace(b"wss://127.0.0.1", b"ws://127.0.0.1")
+
+
 def patch_metadata(data: bytes, hosts: dict[str, str], log: list) -> bytes:
     meta = Metadata(bytearray(data))
     for i in range(meta.count):
         old = meta.get(i)
-        new = _sub_hosts(old, hosts)
+        new = _plain_schemes(_sub_hosts(old, hosts))
         if new != old:
             meta.set(i, new)
             log.append((old, new))
@@ -223,7 +239,9 @@ def plan_hosts() -> dict[str, str]:
                 hosts |= hosts_in(lit)
         else:
             hosts |= hosts_in(data)
-    return {h: f"127.0.{1 + n // 250}.{1 + n % 250}" for n, h in enumerate(sorted(hosts))}
+    # Todo a 127.0.0.1, un puerto por host: Unity solo deja usar http:// sin TLS
+    # contra localhost/127.0.0.1 ("Insecure connection not allowed" con otras IPs).
+    return {h: f"127.0.0.1:{FIRST_PORT + n}" for n, h in enumerate(sorted(hosts))}
 
 
 # ------------------------------------------------------------------ archivos

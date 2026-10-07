@@ -73,15 +73,31 @@ Los nombres de clases del juego están ofuscados (caracteres CJK). Steamworks.NE
 
 **Hecho (2026-10-07):**
 - `steam_stub\` — `steam_api64.dll` propia (ver su README). Probada dentro del juego: arranca sin Steam, crea las interfaces y entrega el ticket (`GetAuthTicketForWebApi`, identity `pg3d_backend`, callback 168) y las estadísticas (1101).
-- `offline\patch.py` — modo offline (`py -m offline.patch plan|apply|restore|status`; también botón en el launcher). Redirige 54 hosts a `127.0.1.N` (mapa en `launcher-data\offline-hosts.json`) en `global-metadata.dat` (literales acortados), `globalgamemanagers` (URLs de Unity Cloud, misma longitud con relleno `/`), `FirebaseCppApp`/`FirebaseCppRemoteConfig` (cadenas C, relleno NUL) y los JSON de `StreamingAssets`, y pone el stub de Steam. Originales en `launcher-data\originals\<sha256>`; la restauración se comprobó idéntica byte a byte. Al pasar a oficial, el launcher desactiva antes los mods.
+- `offline\patch.py` — modo offline (`py -m offline.patch plan|apply|restore|status`; también botón en el launcher). Redirige 54 hosts a `127.0.0.1:8001+n` (mapa en `launcher-data\offline-hosts.json`) en `global-metadata.dat` (literales acortados), `globalgamemanagers` (URLs de Unity Cloud, misma longitud con relleno `/`), `FirebaseCppApp`/`FirebaseCppRemoteConfig` (cadenas C, relleno NUL) y los JSON de `StreamingAssets`, y pone el stub de Steam. Originales en `launcher-data\originals\<sha256>`; la restauración se comprobó idéntica byte a byte. Al pasar a oficial, el launcher desactiva antes los mods.
 - **Comprobado:** con el juego en offline, 90 s vigilando sus conexiones TCP: 0 externas. El juego muestra "Offline"/"sin conexión", que es lo esperado sin servidor local.
 - El validador de certificados propio del juego (`CertificateHandler` en la clase ofuscada TypeDefIndex 12719, RVA 0x46A600) es `mov al,1; ret`: acepta cualquier certificado, así que el servidor local puede usar HTTPS con certificado autofirmado (openssl viene con Git for Windows). Las peticiones HTTP van por UnityWebRequest (errores "Curl error 7" en el log).
 - Photon: `ns.exitgames.com` está en literales (redirigido), pero `http://ns.exitgamescloud.com:80/photon/n` es un valor por defecto de campo en la sección 8 de la metadata, con prefijo de longitud comprimido; no se ha tocado. Hay que resolverlo al hacer el multijugador.
 
+**Servidor local (`offline\server.py`, `py -m offline.server`)** — escucha en `127.0.0.1:<puerto>` de cada host del mapa, HTTP y HTTPS en el mismo puerto (mira el primer byte). Registra todo en `launcher-data\server-log.jsonl` (con `body_b64`). Responde 404 salvo las rutas de `ROUTES`.
+
+Por qué 127.0.0.1 con puertos y `http://`: UnityTls no acepta el certificado autofirmado ("not correctly signed by a trusted CA"); esas peticiones no usan el validador permisivo. Con `http://` Unity lanza "Insecure connection not allowed" (`insecureHttpOption` = NotAllowed) salvo hacia 127.0.0.1/localhost. Por eso el parche usa `127.0.0.1:8001+n` y cambia los literales `https`/`https://`/`wss`/`wss://` a sus versiones sin TLS.
+
+**Protocolo `/auth_v2/`** (POST a `server-v2`, método que lo envía: `上与丛丌东一下下上.丙七丝丅丘丒丏丒丘.MoveNext` 0x1E88320; cuerpo armado en `上与丛丌东一下下上$$丁丈丛丑丄丑七丁丒` 0x1E505B0):
+- Cuerpo binario UTF-16LE: por campo `[long. clave en bytes][long. valor en bytes][clave][valor]`; las longitudes sin desplazar y cada carácter desplazado `shift`. El último valor termina en un carácter 0. El orden de los campos es aleatorio.
+- `shift` cambia en cada petición y sale de `id_seed` (semillas consecutivas → +11 de desplazamiento; probablemente `new System.Random(id_seed)`). El servidor lo averigua probando hasta que aparece la clave `version`.
+- Campos: `cpu_frequency, ram, cpu_model, uniq_id` (ID del jugador guardado en local; aquí 355395299), `cpu_cores, device_model, hash` (UUID), `device_id, platform` (9 = Steam), `id_seed, steam_ticket` (hex de los 2560 bytes del ticket), `version` (26.12.0).
+- **Respuesta: mismo formato y mismo `shift`.** Comprobado: el juego la acepta ("auth response urls: meta_urls=[null], bundle_urls=[null]") y deja de reintentar. Con JSON da `ArgumentOutOfRangeException` en `UnicodeEncoding.GetString` (decodificador `丞丟三丄不不丟不丂`).
+- Claves que lee la respuesta (`万丁丕丄丟世丕东丝` 0x1E51BB0): `url, meta_urls, bundle_urls, token, hash, player_id, server_time, check_version, end_time, create_to, easy, currency, reason_key, err_code, queue_place, polling_timeout`. Ahora se envían `url=ws://127.0.0.1:9001, token, hash, player_id, server_time, check_version=0, end_time`.
+- Tras la auth el juego **no** abre aún el websocket (nada llega a 9001). Falta saber el formato que espera `url` (el literal es `wss://{0}:{1}`, quizá quiere host y puerto por separado) o qué otro campo lo activa.
+- Otra respuesta, probablemente del websocket (`丝丂丝三一且丕专且` 0x1E57BF0): `id, secret, country, continent, developer, block_value, reg_ver, reg_time, l_online_diff, time, new_player, char_key, progress_status, last_command, err_code, OldPurchased, TableViewKey`. "terceShtuA" = "AuthSecret" al revés.
+- Hay también un flujo `auth/cubicid` con `session_token`, `req_id` y `Authorization: Bearer` (cuentas Cubic ID), que no se usa en Steam.
+
+**`research\xref.py`** — referencias cruzadas sin desensamblador: `py research/xref.py <dump> str "<literal>"` da los métodos que usan un texto; `method <rva>` da los textos de un método. Indexa en 2 s las cargas `[rip+disp32]` de `GameAssembly.dll` contra las ranuras de literales de `script.json`.
+
 **Siguiente:**
-1. Servidor local en Python (HTTPS en 443 sobre las IPs `127.0.1.N`): empezar por `POST /auth_v2/` en `server-v2` (127.0.1.x según el mapa) registrando lo que llega, y la configuración de `secure.pixelgun3dserver.com`. Luego el websocket `wss://{0}:{1}` que indique la respuesta de auth, hasta llegar al menú principal.
-2. Para el formato de la respuesta de auth hará falta desensamblar (no hay numpy ni capstone; pedir permiso para instalar capstone) o deducirlo de los textos de log del juego.
-3. Photon local para el multijugador en LAN.
+1. Que el juego abra el websocket: probar formatos de `url` y buscar con `xref.py` qué método usa `wss://{0}:{1}` / `ws://{0}:{1}` y de dónde salen `{0}` y `{1}`.
+2. Protocolo del websocket hasta el menú principal (perfil, inventario, config). Peticiones de config que ya llegan: `secure.pixelgun3dserver.com/pixelgun3d-config/...` y `pg3d-config-system/{0}/{1}.json`.
+3. Partidas: Stephan quiere entrar en deathmatch y los demás modos aunque sea solo, idealmente con bots. Opciones: modo offline de Photon PUN (sala local sin servidor) o un servidor compatible con Photon. Photon tiene `ns.exitgames.com` redirigido y `ns.exitgamescloud.com:80` sin redirigir (valor por defecto de campo, sección 8 de la metadata).
 
 ## Reglas del proyecto
 
