@@ -46,10 +46,38 @@ Python 3.10+ con la biblioteca estándar y tkinter.
 
 - Al arrancar, hace hash de los archivos clave (exe, `GameAssembly.dll`, `UnityPlayer.dll`, `global-metadata.dat`, `catalog.json`, `build_info`) y los compara con `launcher-data\baseline.json`. Si cambian, el juego se ha actualizado. El historial queda en `builds-history.json`.
 - Envuelve la CLI de PGAssetTool: instalar packs de `packs\`, activar/desactivar, quitar, reaplicar (un `enable` lanza una reconciliación completa), verificar e info.
-- "Jugar" abre `steam://rungameid/2524890`, o el exe si eso falla.
+- "Jugar" lanza el exe de la copia gestionada. Solo usa `steam://rungameid/2524890` si la copia está dentro de `steamapps\common` (antes abría siempre la instalación de Steam en `C:\Program Files (x86)\Steam\steamapps\common\`, que también existe en este PC).
 - `join_parts()` une los trozos del exe y comprueba el hash.
-- **Pruebas:** solo en Linux, con una instalación falsa y un `pgassettool` simulado. La interfaz y el uso real en Windows **no se han probado**.
+- **Pruebas:** probado en Windows el 2026-10-07: la interfaz arranca, registra la build (`build_info`: "Build from DESKTOP-KPFUUJA at 9/30/2026 10:31:26 PM") y `pgassettool info/show 1/items pet/verify` funcionan con la versión 26.12.0 (2326 bundles, 112 mascotas, 0 bundles alterados).
 - Se arranca con `py pg3d_launcher.py` desde esta carpeta.
+
+## Repositorio
+
+https://github.com/stepsannatu-byte/pixeloffline (público, MIT). El repo es la carpeta `PG3D Launcher`. Stephan quiere un push cada vez que se termina un bloque de trabajo. No subir binarios del juego ni de PGAssetTool (ver `.gitignore`).
+
+## Objetivo prioritario: offline / LAN sin Steam
+
+Stephan quiere jugar offline o en un servidor local, **sin Steam en absoluto**. Los packs son secundarios.
+
+**Arranque observado** (`%USERPROFILE%\AppData\LocalLow\Pixel Gun Team\Pixel Gun 3D\Player.log` y volcado de Il2CppDumper):
+1. Steamworks.NET (`SteamAPI_Init`, despacho manual de callbacks, `SteamClient020`/`SteamUser023`).
+2. `GetAuthTicketForWebApi` → callback 168 → "Authorization SteamTicketCallbackFunc steamTicketReceived True".
+3. `[ReserveUrls] http auth request sent: url='https://server-v2.pixelgun3dserver.com/auth_v2/'`. La respuesta puede traer `meta_urls` alternativas (solo en "grayzone").
+4. Websocket `wss://{0}:{1}`. Multijugador por Photon (`ns.exitgamescloud.com`).
+5. Configuración: `secure.pixelgun3dserver.com/pixelgun3d-config/...`, `secure.pixelgun3dserver.com/pg3d-config-system/{0}/{1}.json`, `cfg.pixelgun3d.com/config.json`. Contenido: `cdn.pixelgun3d.com/addressables/standalone/26.12/` (con `m_IgnoreFailures`, así que sin red usa el catálogo local).
+6. Telemetría: AppsFlyer, lightmap.com, Firebase, Unity Analytics. Pagos: Xsolla.
+
+Los nombres de clases del juego están ofuscados (caracteres CJK). Steamworks.NET no lo está. Los textos de log sirven para localizar el código.
+
+**Herramientas externas** (fuera del repo, en `%USERPROFILE%\Downloads\pg3d-tools-ext\`): Il2CppDumper v6.7.46 (Perfare, zip SHA-256 `F5FC60DF…A2DEA2`) y su salida en `dump\` (`dump.cs`, `stringliteral.json`, `script.json`, `il2cpp.h`). Metadata e IL2CPP versión 31. Zig 0.16.0 instalado con `pip --user` como compilador de C.
+
+**Hecho:** `steam_stub\` — `steam_api64.dll` propia (ver su README). Probada con `test_stub.py` simulando Steamworks.NET; **no probada aún dentro del juego**.
+
+**Siguiente:**
+1. Redirigir las URLs: parchear los literales de `global-metadata.dat` en la copia offline (con copia del original y restauración antes del modo oficial). Problema por resolver: son `https://`/`wss://`; mirar qué cliente HTTP usa el juego y si acepta `http://` o certificados propios. Sin administrador no se puede tocar `hosts` ni instalar una CA.
+2. Instalar el stub y el parche juntos (nunca el stub solo) y leer `steam_stub.log` y `Player.log`.
+3. Servidor local en Python: `/auth_v2/`, websocket y configuración, hasta el menú principal.
+4. Photon local para el multijugador en LAN.
 
 ## Reglas del proyecto
 
@@ -59,8 +87,7 @@ Python 3.10+ con la biblioteca estándar y tkinter.
 
 ## Siguientes pasos
 
-1. Ejecutar el launcher en Windows y corregir lo que falle.
-2. Lanzar `pgassettool info`, `pgassettool show 1`, `pgassettool items pet` y `pgassettool verify` para confirmar que lee esta versión.
+1. ~~Ejecutar el launcher en Windows~~ y ~~comprobar PGAssetTool con esta versión~~ (hecho).
 3. **Fork de PGAssetTool para crear objetos nuevos** (armas, skins, mascotas…), solo offline. El primer hito es un comando `clone`:
    - copiar el prefab de un objeto existente y sus assets a un bundle nuevo registrado en el manifiesto y catálogo;
    - añadir entradas nuevas en `itemDatas` e `itemRecords` de `it_d`;
@@ -68,5 +95,5 @@ Python 3.10+ con la biblioteca estándar y tkinter.
    - después, aplicarle el aspecto con las operaciones replace que ya existen.
 
    Las estadísticas se ajustarían clonando y modificando campos existentes, no escribiendo comportamiento nuevo. Antes hay que inspeccionar `it_d` real y averiguar dónde viven las estadísticas (componentes del prefab o Remote Config).
-4. **Contrato del backend (capa 1):** capturar qué pide el juego al arrancar (Firebase Remote Config, login o perfil, inventario). Revisar antes el EULA. Después, servidor local mínimo hasta llegar al menú principal, que además dé la propiedad de los objetos creados con el fork, porque el inventario lo valida el servidor.
+4. **Contrato del backend (capa 1):** ver "Objetivo prioritario" arriba. El servidor local también tiene que dar la propiedad de los objetos creados con el fork, porque el inventario lo valida el servidor.
 5. Mapas procedurales por semilla e índice comunitario de packs.

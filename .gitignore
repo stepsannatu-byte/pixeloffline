@@ -12,3 +12,9 @@ packs/
 
 __pycache__/
 *.pyc
+
+# steam_stub: binario compilado, código generado y archivos locales
+steam_stub/steam_api64.dll
+steam_stub/stub_gen.c
+steam_stub/steam_stub.log
+steam_stub/steam_stub.ini
