@@ -1,0 +1,14 @@
+# Binarios de PGAssetTool (se distribuyen aparte, ver README)
+pgassettool.exe
+pgassettool.exe.part*
+pgassettool
+*.tmp
+classdata.tpk
+
+# Datos locales: copias de bundles, estado del launcher, packs del usuario
+PGAssetTool-data/
+launcher-data/
+packs/
+
+__pycache__/
+*.pyc
