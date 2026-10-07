@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from offline import socketio
 from offline.patch import DATA, HOSTS_FILE
 
 CERT = DATA / "server-cert.pem"
@@ -155,6 +156,17 @@ def make_handler(host: str):
         protocol_version = "HTTP/1.1"
 
         def _handle(self) -> None:
+            if self.headers.get("Upgrade", "").lower() == "websocket":
+                key = self.headers.get("Sec-WebSocket-Key", "")
+                self.send_response(101, "Switching Protocols")
+                self.send_header("Upgrade", "websocket")
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Sec-WebSocket-Accept", socketio.accept_key(key))
+                self.end_headers()
+                self.wfile.flush()
+                self.close_connection = True
+                socketio.serve(self.connection, urlsplit(self.path).query)
+                return
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else b""
             path = urlsplit(self.path).path
@@ -193,7 +205,7 @@ def main() -> int:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(CERT, KEY)
     servers = []
-    for host, addr in hosts.items():
+    for host, addr in [*hosts.items(), ("local-socketio", f"127.0.0.1:{WS_PORT}")]:
         ip, _, port = addr.partition(":")
         try:
             srv = Server((ip, int(port or 443)), make_handler(host))

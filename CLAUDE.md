@@ -94,10 +94,13 @@ Por qué 127.0.0.1 con puertos y `http://`: UnityTls no acepta el certificado au
 
 **`research\xref.py`** — referencias cruzadas sin desensamblador: `py research/xref.py <dump> str "<literal>"` da los métodos que usan un texto; `method <rva>` da los textos de un método. Indexa en 2 s las cargas `[rip+disp32]` de `GameAssembly.dll` contra las ranuras de literales de `script.json`.
 
-**Siguiente:**
-1. Que el juego abra el websocket: probar formatos de `url` y buscar con `xref.py` qué método usa `wss://{0}:{1}` / `ws://{0}:{1}` y de dónde salen `{0}` y `{1}`.
-2. Protocolo del websocket hasta el menú principal (perfil, inventario, config). Peticiones de config que ya llegan: `secure.pixelgun3dserver.com/pixelgun3d-config/...` y `pg3d-config-system/{0}/{1}.json`.
-3. Partidas: Stephan quiere entrar en deathmatch y los demás modos aunque sea solo, idealmente con bots. Opciones: modo offline de Photon PUN (sala local sin servidor) o un servidor compatible con Photon. Photon tiene `ns.exitgames.com` redirigido y `ns.exitgamescloud.com:80` sin redirigir (valor por defecto de campo, sección 8 de la metadata).
+`xref.py` también tiene `dis <rva>` (desensambla con capstone, `pip install --user capstone`, y anota llamadas, textos y tipos) y `callers <rva>`.
+
+**Socket.IO (`offline\socketio.py`)** — con `token` no vacío en la respuesta de auth, `Rilisoft.WebSocket.WebSocketManager` (BestHTTP.SocketIO antiguo) conecta a la `url` con `?EIO=4&transport=websocket&client_version=26.12.0&c=1&client_ver=v2&platform=9&a=0`. El servidor local hace el handshake websocket, manda el paquete open de Engine.IO y `40` (conexión al namespace raíz, como Socket.IO v2). Entonces el juego conecta al namespace `/sio` y envía su primer evento como binario con dos adjuntos.
+
+**Estado final (2026-10-07): el proyecto se detiene aquí en la parte jugable.** Los eventos del socket van cifrados por el cliente, y descifrarlos o reimplementarlos queda fuera de lo que Claude va a hacer, tanto con capturas del juego oficial como sin ellas. Tampoco se harán trainers, menús de desarrollo inyectados ni parches de código para saltarse el servidor y entrar en modos online o mundos. Sin ese paso el juego no llega al menú principal, y el inventario lo valida el servidor, así que armas o mundos nuevos tampoco serían jugables. `offline\pgcrypto.py` existe solo en el PC de Stephan y está excluido del repo.
+
+Lo que sigue siendo útil: el launcher, el modo offline (desconexión total y reversible), el servidor local hasta la autenticación y esta documentación del legado.
 
 ## Reglas del proyecto
 
