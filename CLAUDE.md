@@ -71,13 +71,17 @@ Los nombres de clases del juego están ofuscados (caracteres CJK). Steamworks.NE
 
 **Herramientas externas** (fuera del repo, en `%USERPROFILE%\Downloads\pg3d-tools-ext\`): Il2CppDumper v6.7.46 (Perfare, zip SHA-256 `F5FC60DF…A2DEA2`) y su salida en `dump\` (`dump.cs`, `stringliteral.json`, `script.json`, `il2cpp.h`). Metadata e IL2CPP versión 31. Zig 0.16.0 instalado con `pip --user` como compilador de C.
 
-**Hecho:** `steam_stub\` — `steam_api64.dll` propia (ver su README). Probada con `test_stub.py` simulando Steamworks.NET; **no probada aún dentro del juego**.
+**Hecho (2026-10-07):**
+- `steam_stub\` — `steam_api64.dll` propia (ver su README). Probada dentro del juego: arranca sin Steam, crea las interfaces y entrega el ticket (`GetAuthTicketForWebApi`, identity `pg3d_backend`, callback 168) y las estadísticas (1101).
+- `offline\patch.py` — modo offline (`py -m offline.patch plan|apply|restore|status`; también botón en el launcher). Redirige 54 hosts a `127.0.1.N` (mapa en `launcher-data\offline-hosts.json`) en `global-metadata.dat` (literales acortados), `globalgamemanagers` (URLs de Unity Cloud, misma longitud con relleno `/`), `FirebaseCppApp`/`FirebaseCppRemoteConfig` (cadenas C, relleno NUL) y los JSON de `StreamingAssets`, y pone el stub de Steam. Originales en `launcher-data\originals\<sha256>`; la restauración se comprobó idéntica byte a byte. Al pasar a oficial, el launcher desactiva antes los mods.
+- **Comprobado:** con el juego en offline, 90 s vigilando sus conexiones TCP: 0 externas. El juego muestra "Offline"/"sin conexión", que es lo esperado sin servidor local.
+- El validador de certificados propio del juego (`CertificateHandler` en la clase ofuscada TypeDefIndex 12719, RVA 0x46A600) es `mov al,1; ret`: acepta cualquier certificado, así que el servidor local puede usar HTTPS con certificado autofirmado (openssl viene con Git for Windows). Las peticiones HTTP van por UnityWebRequest (errores "Curl error 7" en el log).
+- Photon: `ns.exitgames.com` está en literales (redirigido), pero `http://ns.exitgamescloud.com:80/photon/n` es un valor por defecto de campo en la sección 8 de la metadata, con prefijo de longitud comprimido; no se ha tocado. Hay que resolverlo al hacer el multijugador.
 
 **Siguiente:**
-1. Redirigir las URLs: parchear los literales de `global-metadata.dat` en la copia offline (con copia del original y restauración antes del modo oficial). Problema por resolver: son `https://`/`wss://`; mirar qué cliente HTTP usa el juego y si acepta `http://` o certificados propios. Sin administrador no se puede tocar `hosts` ni instalar una CA.
-2. Instalar el stub y el parche juntos (nunca el stub solo) y leer `steam_stub.log` y `Player.log`.
-3. Servidor local en Python: `/auth_v2/`, websocket y configuración, hasta el menú principal.
-4. Photon local para el multijugador en LAN.
+1. Servidor local en Python (HTTPS en 443 sobre las IPs `127.0.1.N`): empezar por `POST /auth_v2/` en `server-v2` (127.0.1.x según el mapa) registrando lo que llega, y la configuración de `secure.pixelgun3dserver.com`. Luego el websocket `wss://{0}:{1}` que indique la respuesta de auth, hasta llegar al menú principal.
+2. Para el formato de la respuesta de auth hará falta desensamblar (no hay numpy ni capstone; pedir permiso para instalar capstone) o deducirlo de los textos de log del juego.
+3. Photon local para el multijugador en LAN.
 
 ## Reglas del proyecto
 

@@ -9,7 +9,11 @@ Qué hace:
   * Tras una actualización, reaplica los mods activos.
   * Lanza el juego.
 
-Qué NO hace (todavía): modo offline / servidor local. Eso es la capa 1.
+  * Modo offline: desconecta la copia de todos los servidores externos y de
+    Steam (offline/patch.py), y la devuelve intacta al pasar a modo oficial.
+
+Qué NO hace (todavía): servidor local. Sin él, el modo offline arranca el
+juego pero se queda "sin conexión".
 
 Uso: coloca este archivo junto a pgassettool.exe y ejecuta
     py pg3d_launcher.py
@@ -26,6 +30,8 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+
+from offline import patch as offline
 
 APP_ID = "2524890"  # Pixel Gun 3D: PC Edition en Steam
 BASE = Path(__file__).resolve().parent
@@ -134,6 +140,15 @@ def compare(old: dict, new: dict) -> list[str]:
     return [rel for rel in KEY_FILES if old.get("files", {}).get(rel) != new["files"].get(rel)]
 
 
+def unpatched(snap: dict) -> dict:
+    """En modo offline, cuenta los archivos parcheados por el launcher como su original."""
+    files = dict(snap["files"])
+    for f in offline.status()["files"]:
+        if files.get(f["path"]) == f.get("patched_sha256"):
+            files[f["path"]] = f["sha256"]
+    return {**snap, "files": files}
+
+
 def accept_baseline(snap: dict) -> None:
     hist = _read_json(HISTORY, [])
     hist.append(snap)
@@ -143,7 +158,7 @@ def accept_baseline(snap: dict) -> None:
 
 def build_status(game: Path) -> tuple[str, list[str], dict]:
     """Devuelve (estado, archivos_cambiados, snapshot_actual)."""
-    snap = snapshot(game)
+    snap = unpatched(snapshot(game))
     base = _read_json(BASELINE, None)
     if base is None:
         accept_baseline(snap)
@@ -375,7 +390,7 @@ def main() -> None:
         in_background("Reaplicar mods activos", tool.reapply)
 
     def act_accept():
-        accept_baseline(snapshot(game))
+        accept_baseline(unpatched(snapshot(game)))
         check_build()
         write("Build actual aceptada como base.")
 
@@ -389,11 +404,40 @@ def main() -> None:
         if sys.platform == "win32":
             os.startfile(PACKS)  # type: ignore[attr-defined]
 
+    def act_mode():
+        if offline.status()["mode"] == "official":
+            in_background("Pasar a modo offline", lambda: (0, offline.apply()), lambda _: show_mode())
+            return
+        # Al volver a oficial no puede quedar contenido modificado en los bundles.
+        def to_official():
+            msgs = []
+            for m in tool.mods():
+                if m["enabled"]:
+                    code, out = tool.run("disable", m["id"])
+                    msgs.append(out)
+                    if code != 0:
+                        return code, "\n".join(msgs + ["No se ha restaurado: falló al desactivar mods."])
+            msgs.append(offline.restore())
+            return 0, "\n".join(msgs)
+        in_background("Pasar a modo oficial", to_official, lambda _: show_mode())
+
+    def show_mode():
+        mode = offline.status()["mode"]
+        mode_var.set("Modo: OFFLINE (sin Steam ni servidores)" if mode == "offline" else "Modo: oficial")
+        mode_btn.configure(text="Pasar a oficial" if mode == "offline" else "Pasar a offline")
+
     def act_play():
         try:
             write(f"Juego lanzado {launch_game(game)}.")
         except OSError as e:
             write(f"No se pudo lanzar el juego: {e}")
+
+    mode_var = tk.StringVar()
+    ttk.Label(top, textvariable=mode_var).pack(side="right")
+    mode_btn = ttk.Button(bar, command=act_mode)
+    mode_btn.pack(side="left", padx=(0, 6))
+    buttons.append(mode_btn)
+    show_mode()
 
     for text, fn in [("Instalar pack", act_install), ("Activar/Desactivar", act_toggle),
                      ("Quitar", act_remove), ("Reaplicar mods", act_reapply),
